@@ -156,18 +156,18 @@ Modern resorts need to balance three interconnected priorities: efficient operat
 ## 🛠️ Technology Stack
 
 ### Frontend
-- **React 18** - Modern UI components
+- **React 18** - Interactive luxury UI components & guest experience portal
 - **TypeScript** - Type-safe development
-- **Tailwind CSS** - Utility-first styling
-- **Lucide React** - Beautiful icons
-- **Recharts** - Data visualization
+- **Tailwind CSS** - Glassmorphism, animations, responsive design
+- **Lucide React** - High-aesthetic iconography
+- **Recharts** - Dynamic resort operations visualization
 
-### Design Principles
-- Clean, modern UI
-- Intuitive navigation
-- Mobile-responsive layouts
-- Dark mode support
-- Accessibility compliance
+### Backend & AI Intelligence
+- **Node.js 22+ (Native SQLite)** - Fast, robust REST API server
+- **Express.js** - Session management, reverse proxy trust, CSRF protection (`X-SR360: portal`)
+- **Nugen Intelligence Engine** - Intent classification, service routing, automated action dispatch
+- **Google Gemini RAG Concierge** - Contextual guest service assistant grounded in resort knowledge
+- **Real-Time Two-Way Sync** - AI Concierge booking requests automatically dispatch to Guest Portal & Manager Operations Hub
 
 ---
 
@@ -175,106 +175,86 @@ Modern resorts need to balance three interconnected priorities: efficient operat
 
 ```
 resort-intelligence/
+├── server/
+│   ├── index.mjs               # Express API & static client server
+│   ├── nugen.mjs               # Nugen intelligence engine & intent router
+│   ├── rag.mjs                 # Google Gemini RAG resort concierge
+│   ├── db.mjs                  # Native SQLite database layer
+│   ├── auth.mjs                # Session-based auth & cookie management
+│   └── data/
+│       ├── resort_guide.md     # Resort knowledge base for RAG
+│       └── portal.sqlite       # Local persistent database
 ├── src/
-│   ├── pages/
-│   │   ├── Dashboard.tsx           # Main overview
-│   │   ├── StaffScheduling.tsx     # Staff management
-│   │   ├── PredictiveMaintenance.tsx # Equipment monitoring
-│   │   ├── InventoryOptimization.tsx # Stock management
-│   │   ├── GuestExperience.tsx     # Guest personalization
-│   │   ├── AIConcierge.tsx         # Chat interface
-│   │   ├── SentimentAnalysis.tsx   # Review analysis
-│   │   └── DynamicPricing.tsx      # Revenue optimization
-│   ├── types/
-│   │   └── index.ts                # TypeScript definitions
-│   ├── App.tsx                     # Main application
-│   ├── main.tsx                    # Entry point
-│   └── index.css                   # Global styles
-├── package.json
-├── tailwind.config.js
-├── tsconfig.json
-└── vite.config.ts
+│   ├── pages/                  # Manager workspace & operational dashboards
+│   ├── guest/                  # Guest portal, booking, and AI concierge UI
+│   ├── types/                  # TypeScript interface definitions
+│   ├── App.tsx                 # Main application shell & routing
+│   └── index.css               # Global styles & luxury design tokens
+├── scripts/
+│   ├── test-nugen.mjs          # Autonomous test suite for Nugen routing
+│   └── tunnel.mjs              # Persistent auto-reconnecting public tunnel
+├── Dockerfile                  # Production-ready multi-stage container
+├── render.yaml                 # 1-Click Render blueprint
+├── railway.json                # Railway cloud deployment configuration
+├── vercel.json                 # Vercel SPA routing & backend rewrite configuration
+└── vite.config.ts              # Vite bundling & development proxy
 ```
 
 ---
 
 ## 🚀 Getting Started
 
-### Installation
+### 1. Installation
 ```bash
-cd resort-intelligence
+git clone https://github.com/sanskar3303k/trial_five_star.git
+cd trial_five_star
 npm install
 ```
 
-### Development
+### 2. Environment Setup
+Create a `.env` file in the root directory:
+```env
+PORT=5000
+VITE_API_URL=http://localhost:5000
+GEMINI_API_KEY=your_gemini_api_key_here
+NUGEN_API_KEY=your_nugen_api_key_here
+```
+
+### 3. Development Mode
+Run both frontend (Vite port 3000) and backend (Express port 5000) concurrently:
 ```bash
 npm run dev
 ```
+- **Manager Portal**: `http://localhost:3000/` (or port 5000 in production)
+- **Guest Portal**: `http://localhost:3000/guest`
+- **Default Guest Credentials**: Room `204`, Guest `Alex Morgan`
+- **Default Manager Credentials**: `manager@resort.internal` / `Manager#360`
 
-### Build
+---
+
+## 🌐 Cloud Deployment Options
+
+### Option A: Render (1-Click Blueprint)
+1. Push your repository to GitHub.
+2. In Render, select **New > Blueprint** and connect this repository.
+3. It will automatically detect `render.yaml`, build the frontend, and run the Express server on a unified port.
+
+### Option B: Railway
+1. In Railway, click **New Project > Deploy from GitHub repo**.
+2. Railway will automatically detect `railway.json` and deploy the Dockerfile.
+
+### Option C: Docker
 ```bash
-npm run build
+docker build -t resort-intelligence .
+docker run -p 5000:5000 -e PORT=5000 resort-intelligence
 ```
 
 ---
 
-## 📊 Dashboard Overview
-
-### Main KPIs Displayed
-1. **Occupancy Rate** - Current and forecasted
-2. **Revenue Metrics** - Daily/monthly revenue
-3. **Staff Utilization** - Workload distribution
-4. **Guest Satisfaction** - NPS and ratings
-
-### AI Insights Panel
-- Real-time recommendations
-- Priority-based alerts
-- One-click actions
-- Impact projections
-
----
-
-## 🎨 Design System
-
-### Colors
-- **Primary Blue**: #3b82f6 (Actions, links)
-- **Purple**: #8b5cf6 (AI, insights)
-- **Green**: #10b981 (Success, positive)
-- **Orange**: #f59e0b (Warning, medium priority)
-- **Red**: #ef4444 (Critical, negative)
-
-### Typography
-- **Font Family**: Inter
-- **Headings**: Bold (700-800)
-- **Body**: Regular (400-500)
-- **Small text**: 12px
-
-### Components
-- Cards: Rounded corners (16px), subtle shadows
-- Buttons: Rounded (8px), gradient backgrounds
-- Inputs: Border radius (8px), focus states
-- Charts: Custom colors, responsive
-
----
-
-## 🔮 Future Enhancements
-
-1. **Backend Integration** - Connect to real APIs
-2. **Real-time Updates** - WebSocket connections
-3. **Mobile App** - React Native version
-4. **Advanced Analytics** - ML model integration
-5. **Voice Commands** - Voice-activated controls
-6. **Multi-property Support** - Chain management
-
----
-
-## 📝 Notes
-
-- All data is currently mocked for demonstration
-- Charts use realistic sample data
-- UI/UX follows modern design principles
-- Each page is independently functional
-- Dark mode toggle available in sidebar
+## 📝 Demo Credentials & Interconnection
+- **Guest Experience**: Login as Room `204` (Alex Morgan).
+- **AI Concierge**: Type *"I want to book a spa"* or *"Request late checkout"*.
+- **Manager Workspace**: Switch to Manager Portal (`/`) -> **Requests** tab to view the synchronized ticket immediately in real-time.
 
 ---
 
