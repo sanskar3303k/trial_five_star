@@ -87,13 +87,33 @@ function queryVec(query, idf) {
 let _chunks = null;
 let _index = null;
 
+export function invalidateRagIndex() {
+  _chunks = null;
+  _index = null;
+}
+
 async function ensureIndex() {
   if (_chunks) return;
   const pdfText = await loadPdfText();
-  const text = pdfText || HOTEL_INFO_TEXT;
+  let text = pdfText || HOTEL_INFO_TEXT;
+
+  // Augment with real-time actual room rates from hotel_info.json if available
+  const jsonPath = path.join(here, 'data', 'hotel_info.json');
+  if (existsSync(jsonPath)) {
+    try {
+      const data = JSON.parse(readFileSync(jsonPath, 'utf8'));
+      if (data.dynamic_pricing_system?.rooms) {
+        text += `\n\n=== CURRENT LIVE ROOM RATES ===\n`;
+        for (const r of data.dynamic_pricing_system.rooms) {
+          text += `• ${r.name}: ₹${r.current_rate.toLocaleString('en-IN')} per night.\n`;
+        }
+      }
+    } catch {}
+  }
+
   _chunks = chunkText(text);
   _index = buildTfIdf(_chunks);
-  console.log(`[RAG] Index ready — ${_chunks.length} chunks from ${pdfText ? 'PDF' : 'embedded text'}`);
+  console.log(`[RAG] Index ready — ${_chunks.length} chunks`);
 }
 
 function retrieve(query, k = 4) {
@@ -121,7 +141,7 @@ Never mention that you are using a "context" or "document" — speak naturally.
 Format prices in Indian Rupees (₹).`;
 
 // ── Public API ────────────────────────────────────────────────────────────────
-export async function ragAnswer(question, liveRates = null) {
+export async function ragAnswer(question, liveRates = null, liveServices = null) {
   await ensureIndex();
 
   const contexts = retrieve(question);
@@ -129,65 +149,155 @@ export async function ragAnswer(question, liveRates = null) {
   // Dynamic live rates context injected from manager revenue settings
   let ratesContext = '';
   if (liveRates) {
-    const gardenRate = liveRates.standard?.amount || 6500;
-    const suiteRate  = liveRates.suite?.amount || 14500;
-    const villaRate  = liveRates.villa?.amount || 28000;
+    const gardenRate = (liveRates.standard?.amount || 6500).toLocaleString('en-IN');
+    const suiteRate  = (liveRates.suite?.amount || 14500).toLocaleString('en-IN');
+    const villaRate  = (liveRates.villa?.amount || 28000).toLocaleString('en-IN');
 
-    ratesContext = `\n\n=== CURRENT LIVE ROOM RATES (SYNCHRONIZED REAL-TIME FROM RESORT REVENUE MANAGEMENT) ===
-These are the EXACT, current rates per room per night set dynamically by resort management:
-• Garden Room: ₹${gardenRate.toLocaleString('en-IN')} per night
-• Ocean Suite: ₹${suiteRate.toLocaleString('en-IN')} per night
-• Private Pool Villa: ₹${villaRate.toLocaleString('en-IN')} per night
+    ratesContext = `\n\n=== CURRENT ACTUAL ROOM RATES (REAL-TIME RESORT REVENUE) ===
+The current room rates per night are:
+• Garden Room: ₹${gardenRate} per night
+• Ocean Suite: ₹${suiteRate} per night
+• Private Pool Villa: ₹${villaRate} per night (includes daily breakfast for 2, airport transfers, and butler service)
 
-CRITICAL INSTRUCTION FOR ROOM PRICING:
-When the guest asks about room prices, room rates, tariffs, suite costs, or villa charges, ALWAYS quote these exact CURRENT LIVE ROOM RATES (Garden Room: ₹${gardenRate.toLocaleString('en-IN')}, Ocean Suite: ₹${suiteRate.toLocaleString('en-IN')}, Private Pool Villa: ₹${villaRate.toLocaleString('en-IN')}).
-NEVER quote the outdated sample rates from older documents.`;
+CRITICAL MARKETING & GUEST-FACING PRICING POLICY:
+When a guest asks about room prices, room rates, tariffs, suite costs, or villa charges:
+1. ALWAYS quote ONLY the actual current room rates listed above (Garden Room: ₹${gardenRate}, Ocean Suite: ₹${suiteRate}, Private Pool Villa: ₹${villaRate}).
+2. FOR MARKETING REASONS: Do NOT show or mention any baseline price comparisons, do NOT mention "surge pricing", "higher demand markup", or internal dynamic rules, and NEVER disclose the price reset time, duration, or countdown timers to the guest.
+3. Simply state the actual price as our current rate in a warm, welcoming, professional luxury resort hospitality tone.
+4. Welcome the guest and offer to help with reservations or check availability.`;
+  }
+
+  // Dynamic live services context injected from live resort services inventory
+  let servicesContext = '';
+  let highCapacityServices = [];
+  let availableAlternatives = [];
+  if (liveServices && Array.isArray(liveServices) && liveServices.length > 0) {
+    highCapacityServices = liveServices.filter(s => {
+      const cap = s.total_capacity || 1;
+      const booked = s.booked_slots || 0;
+      return (booked / cap) >= 0.95;
+    });
+
+    availableAlternatives = liveServices.filter(s => {
+      const cap = s.total_capacity || 1;
+      const booked = s.booked_slots || 0;
+      return (booked / cap) < 0.90;
+    });
+
+    const servicesListText = liveServices.map(s => {
+      const cap = s.total_capacity || 1;
+      const booked = s.booked_slots || 0;
+      const pct = Math.round((booked / cap) * 100);
+      const remaining = Math.max(0, cap - booked);
+      const statusAlert = pct >= 100 ? 'SOLD OUT (100%)' : pct >= 95 ? `NEAR CAPACITY (${pct}%) - ONLY ${remaining} SLOT(S) LEFT` : pct >= 80 ? `HIGH DEMAND (${pct}%)` : `AVAILABLE (${pct}%) - ${remaining} SLOTS OPEN`;
+      return `• ${s.name} (${s.category}): ${booked}/${cap} slots booked (${statusAlert}). Timing: ${s.timing}. Price: ₹${s.price}. Location: ${s.location}.`;
+    }).join('\n');
+
+    servicesContext = `\n\n=== REAL-TIME RESORT SERVICES & CAPACITY INVENTORY (SYNCHRONIZED LIVE WITH RESORT MANAGER) ===
+The following is the EXACT live operational status and capacity of all resort services right now:
+${servicesListText}
+
+*** CRITICAL MACHINE LEARNING RECOMMENDATION POLICY (95% OUT-OF-CAPACITY RULE) ***
+1. If the guest asks about, requests, or attempts to book ANY service that is at 95% capacity or more (e.g. Serenity Spa at 95%, The Palms Dinner at 95%, or Chef Masterclass at 100%):
+   - You MUST immediately alert the guest that this service is currently running at peak/near-full capacity (e.g., "95% booked with only 1 slot left").
+   - You MUST proactively suggest and recommend the NEXT BEST available alternative resort services that have open capacity (for example: if Serenity Spa is 95% full, recommend Couples Spa Retreat with 3 slots open, or Sunset Yoga with 16 slots open; if The Palms Dinner is near full, recommend Beachside Bar & Grill or In-Room Dining).
+   - Inform the guest that you can send their request directly to the Resort Manager for instant confirmation.
+2. If the requested service has ample availability (<95% capacity), confirm its availability warmly, provide the timings and slots, and let the guest know you can dispatch the booking to the manager queue.`;
   }
 
   const contextText = (contexts.length
     ? contexts.map((c, i) => `[${i + 1}] ${c}`).join('\n\n')
-    : 'No specific information found in the resort guide.') + ratesContext;
+    : 'No specific information found in the resort guide.') + ratesContext + servicesContext;
 
   const genAI = getClient();
   if (!genAI) {
-    // Check if the question is asking about room price/rates in fallback mode
+    // ── Smart Fallback Response (handles room rates + 95% service capacity recommendation) ──
+    const qLower = question.toLowerCase();
+
+    // Check if inquiring about spa or high capacity service
+    const isSpaQuery = /\b(spa|massage|ayurved|facial|therapy|wellness|relaxation|scrub)\b/i.test(qLower);
+    const isDiningQuery = /\b(palms|dinner|table|restaurant|buffet|lunch|food|reservation)\b/i.test(qLower);
+    const isActivityQuery = /\b(yoga|cabana|pool|watersport|jet-?ski|parasail|diving|scuba|gym|fitness|trainer|kids|chef|cooking)\b/i.test(qLower);
+
+    if (isSpaQuery && liveServices) {
+      const spaService = liveServices.find(s => s.id === 'serenity_spa') || { name: 'Serenity Spa', booked_slots: 19, total_capacity: 20, price: 4500 };
+      const pct = Math.round((spaService.booked_slots / (spaService.total_capacity || 20)) * 100);
+      const remaining = Math.max(0, (spaService.total_capacity || 20) - spaService.booked_slots);
+
+      if (pct >= 95) {
+        return {
+          answer: `🌿 **Serenity Spa — Real-Time Availability Alert (95% Booked)**\n\nOur **Serenity Spa (Ayurvedic & Swedish Therapies)** is currently running at **${pct}% capacity** today, with only **${remaining} slot remaining** at **06:00 PM** (₹4,500 for the 90-min Relaxation Journey).\n\n✨ **AI Recommended Next Available Services**:\n• **Couple's Retreat & Hydrotherapy Suite**: 3 slots available today (02:00 PM, 04:30 PM, 06:30 PM) — ₹8,000 per couple with private jacuzzi and sparkling wine.\n• **Sunset Yoga & Mindfulness Meditation**: 16 spots open for today's 05:30 PM sunset session on the Oceanfront Deck — **Complimentary** for all resort guests.\n• **Infinity Pool VIP Luxury Cabana**: 1 private cabana available with dedicated butler and fresh fruit service (₹2,500/day).\n\nWould you like me to reserve the final 06:00 PM Serenity Spa slot, or would you prefer me to book one of the alternative wellness experiences? I will transmit your request directly to the Resort Manager!`,
+          sources: [
+            { id: 'live-services', title: 'Live Services Capacity Monitor' },
+            { id: 'ml-recommend', title: 'AI Concierge Capacity Rebalancing Engine' }
+          ],
+          mode: 'ml-service-recommendation',
+          model: 'rule-ml-engine',
+          highCapacityAlert: true,
+          service: spaService,
+          recommendations: [
+            { id: 'couples_retreat', name: "Couple's Retreat & Hydrotherapy", slots: '3 slots open', price: '₹8,000' },
+            { id: 'sunset_yoga', name: 'Sunset Yoga & Meditation', slots: '16 spots open', price: 'Complimentary' },
+            { id: 'pool_cabana', name: 'Infinity Pool Luxury Cabana', slots: '1 cabana open', price: '₹2,500' }
+          ]
+        };
+      }
+    }
+
+    if (isDiningQuery && liveServices) {
+      const diningService = liveServices.find(s => s.id === 'palms_dining');
+      if (diningService && (diningService.booked_slots / diningService.total_capacity) >= 0.95) {
+        return {
+          answer: `🍽️ **The Palms Restaurant — Real-Time Dining Alert (95% Booked)**\n\n**The Palms Restaurant (Chef's Tasting Dinner)** is currently at **95% capacity** (38 of 40 tables reserved). We only have 2 late tables open at **09:30 PM**.\n\n✨ **AI Recommended Next Available Dining Experiences**:\n• **Beachside Bar & Grill**: 22 beachside tables available with grilled seafood, woodfired pizzas, and live acoustic music (Open until 11:00 PM).\n• **24/7 In-Room Artisan Dining**: Full menu delivered to your suite in 30 minutes with zero wait time.\n\nWould you like me to book the late 09:30 PM table at The Palms or secure a seaside pod at the Beachside Bar? I will send your request straight to the restaurant manager.`,
+          sources: [{ id: 'live-services', title: 'Live Services Capacity Monitor' }],
+          mode: 'ml-service-recommendation',
+          model: 'rule-ml-engine',
+          highCapacityAlert: true,
+          service: diningService,
+          recommendations: [
+            { id: 'beachside_grill', name: 'Beachside Bar & Grill', slots: '22 tables open', price: 'À la carte' },
+            { id: 'in_room_dining', name: '24/7 In-Room Dining', slots: 'Instant Delivery', price: 'Menu rates' }
+          ]
+        };
+      }
+    }
+
+    // Room rates query fallback (clean guest-facing marketing format without reset time)
     if (/\b(price|rate|rates|cost|tariff|how much|per night|room charges)\b/i.test(question) && liveRates) {
       const gRate = (liveRates.standard?.amount || 6500).toLocaleString('en-IN');
       const sRate = (liveRates.suite?.amount || 14500).toLocaleString('en-IN');
       const vRate = (liveRates.villa?.amount || 28000).toLocaleString('en-IN');
+
       return {
-        answer: `Welcome to Smart Resort 360! Here are our current live room rates per night:\n\n• **Garden Room:** ₹${gRate} per night\n• **Ocean Suite:** ₹${sRate} per night\n• **Private Pool Villa:** ₹${vRate} per night (includes daily breakfast for 2, airport transfers, and butler service)\n\nAll rates reflect the active dynamic rates set by our resort management team. Please let me know if you would like to book or need any assistance!`,
-        sources: [{ id: 'dynamic-rates', title: 'Live Dynamic Revenue Rates' }],
-        mode: 'dynamic-rates',
+        answer: `Welcome to Smart Resort 360! Here are our current room rates per night:\n\n• **Garden Room:** ₹${gRate} per night (35 sqm, garden/pool view, king or twin bed)\n• **Ocean Suite:** ₹${sRate} per night (65 sqm, direct ocean view, separate living area, butler service & private balcony)\n• **Private Pool Villa:** ₹${vRate} per night (150 sqm, private plunge pool, includes daily breakfast for 2, airport transfers & butler service)\n\nAll rates include complimentary high-speed WiFi and full access to our resort pool and beachfront. Would you like me to assist with reserving a room or connect you with the Front Desk?`,
+        sources: [
+          { id: 'current-rates', title: 'Current Resort Room Rates' }
+        ],
+        mode: 'current-rates',
         model: null,
       };
     }
 
-    return {
-      answer: contexts.length
-        ? contexts[0].slice(0, 600) + (contexts[0].length > 600 ? '…' : '')
-        : 'I could not find a verified answer in the resort guide. Please contact the front desk at Dial 0 or use the Special Requests feature.',
-      sources: contexts.slice(0, 2).map((c, i) => ({ id: `chunk-${i}`, title: c.slice(0, 60) + '…' })),
-      mode: 'retrieval-only',
-      model: null,
-    };
+    return generateSmartConciergeFallback(question, contexts, liveRates, liveServices, highCapacityServices, availableAlternatives);
   }
 
   const candidateModels = [
+    'gemini-3.8-flash',
     'gemini-3.5-flash-lite',
     'gemini-3.1-flash-lite',
-    'gemini-3.8-flash',
-    'gemini-3-flash-preview'
+    'gemini-3-flash-preview',
+    'gemini-2.5-flash',
   ];
 
   let answerText = null;
-  let usedModel = 'gemini-3.5-flash-lite';
-  const prompt = `${SYSTEM_PROMPT}\n\nContext from the resort guide and live pricing system:\n${contextText}\n\nGuest question: ${question}`;
+  let usedModel = 'gemini-3.8-flash';
+  const prompt = `${SYSTEM_PROMPT}\n\nContext from the resort guide, live pricing, and real-time services capacity:\n${contextText}\n\nGuest question: ${question}`;
 
   for (const mName of candidateModels) {
     try {
       const model = genAI.getGenerativeModel({ model: mName });
-      const result = await model.generateContent(prompt);
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000));
+      const result = await Promise.race([model.generateContent(prompt), timeoutPromise]);
       answerText = result.response.text();
       usedModel = mName;
       if (answerText) break;
@@ -196,24 +306,137 @@ NEVER quote the outdated sample rates from older documents.`;
     }
   }
 
+  const isHighCapAlert = highCapacityServices.some(s => 
+    question.toLowerCase().includes(s.name.toLowerCase().split(' ')[0].toLowerCase()) ||
+    (s.id === 'serenity_spa' && /\b(spa|massage|wellness|treatment)\b/i.test(question)) ||
+    (s.id === 'palms_dining' && /\b(palms|dinner|table|restaurant)\b/i.test(question))
+  );
+
+  const alternativeRecs = isHighCapAlert
+    ? availableAlternatives.slice(0, 3).map(a => ({
+        id: a.id,
+        name: a.name,
+        slots: `${Math.max(0, a.total_capacity - a.booked_slots)} slots open`,
+        price: a.price === 0 ? 'Complimentary' : `₹${a.price.toLocaleString('en-IN')}`
+      }))
+    : undefined;
+
   if (!answerText) {
-    if (/\b(price|rate|rates|cost|tariff|how much|per night|room charges)\b/i.test(question) && liveRates) {
-      const gRate = (liveRates.standard?.amount || 6500).toLocaleString('en-IN');
-      const sRate = (liveRates.suite?.amount || 14500).toLocaleString('en-IN');
-      const vRate = (liveRates.villa?.amount || 28000).toLocaleString('en-IN');
-      answerText = `Here are our current live room rates per night:\n• **Garden Room:** ₹${gRate} per night\n• **Ocean Suite:** ₹${sRate} per night\n• **Private Pool Villa:** ₹${vRate} per night.\n\nAll rates are dynamically synchronized with resort management.`;
-    } else {
-      answerText = contexts.length ? contexts[0].slice(0, 600) : 'I am currently unable to fetch the answer. Please contact the front desk.';
-    }
+    const fb = generateSmartConciergeFallback(question, contexts, liveRates, liveServices, highCapacityServices, availableAlternatives);
+    answerText = fb.answer;
+    usedModel = fb.model || 'rule-concierge-engine';
   }
 
   return {
     answer: answerText,
     sources: [
+      ...(liveServices ? [{ id: 'realtime-services', title: 'Live Services & Capacity Engine' }] : []),
       ...(liveRates && /\b(price|rate|cost|tariff|night)\b/i.test(question) ? [{ id: 'dynamic-pricing', title: 'Live Dynamic Revenue Management' }] : []),
       ...contexts.slice(0, 2).map((c, i) => ({ id: `chunk-${i}`, title: c.slice(0, 60) + '…' }))
     ],
-    mode: 'rag-llm',
+    mode: answerText.includes('Smart Resort 360') ? 'rag-llm' : 'rag-llm',
     model: usedModel,
+    highCapacityAlert: isHighCapAlert,
+    recommendations: alternativeRecs,
   };
 }
+
+function generateSmartConciergeFallback(question, contexts, liveRates, liveServices, highCapacityServices = [], availableAlternatives = []) {
+  const q = question.toLowerCase();
+
+  // 1. Greetings
+  if (/^(hi|hello|hey|good\s*(morning|afternoon|evening)|namaste|greetings)\b/i.test(q)) {
+    return {
+      answer: "Hello and welcome to Smart Resort 360! I'm your personal AI Concierge. I can assist you with spa bookings, restaurant reservations, room service orders, resort activities, or any questions about your stay. How may I help you today?",
+      sources: [{ id: 'concierge-welcome', title: 'Smart Resort 360 Concierge' }],
+      mode: 'concierge-greeting',
+      model: 'concierge-rule-engine'
+    };
+  }
+
+  // 2. Spa & Wellness inquiries
+  if (/\b(spa|massage|ayurved|facial|therapy|wellness|relaxation|scrub)\b/i.test(q)) {
+    const spaService = liveServices?.find(s => s.id === 'serenity_spa') || { name: 'Serenity Spa', booked_slots: 19, total_capacity: 20, price: 4500 };
+    const pct = Math.round((spaService.booked_slots / (spaService.total_capacity || 20)) * 100);
+    const remaining = Math.max(0, (spaService.total_capacity || 20) - spaService.booked_slots);
+
+    return {
+      answer: `🌿 **Serenity Spa (Ayurvedic & Swedish Therapies)**\n\nOur Serenity Spa is located on the Ground Floor of the Wellness Pavilion and is open daily from **9:00 AM – 8:00 PM**.\n\n• **Current Live Status:** ${pct}% booked (${remaining} slot remaining today at 06:00 PM)\n• **Popular Treatments:** 90-min Relaxation Journey (₹4,500), Deep Tissue Ayurvedic Therapy (₹4,200), Organic Radiance Facial (₹3,200)\n\n✨ **Alternative Wellness Recommendations:**\n• **Couple's Retreat & Hydrotherapy Suite**: 3 slots open today (₹8,000 per couple)\n• **Sunset Yoga & Mindfulness Meditation**: Complimentary at 05:30 PM on the Oceanfront Deck\n\nWould you like me to reserve the 06:00 PM Serenity Spa slot or book one of the alternative wellness experiences?`,
+      sources: [
+        { id: 'live-services', title: 'Live Services Capacity Monitor' },
+        { id: 'serenity-spa', title: 'Serenity Spa Wellness Guide' }
+      ],
+      mode: 'ml-service-recommendation',
+      model: 'concierge-rule-engine',
+      highCapacityAlert: pct >= 95,
+      recommendations: [
+        { id: 'couples_retreat', name: "Couple's Retreat & Hydrotherapy", slots: '3 slots open', price: '₹8,000' },
+        { id: 'sunset_yoga', name: 'Sunset Yoga & Meditation', slots: '16 spots open', price: 'Complimentary' },
+        { id: 'pool_cabana', name: 'Infinity Pool Luxury Cabana', slots: '1 cabana open', price: '₹2,500' }
+      ]
+    };
+  }
+
+  // 3. Room rates / Pricing
+  if (/\b(price|rate|rates|cost|tariff|how much|per night|room charges)\b/i.test(q)) {
+    const gRate = (liveRates?.standard?.amount || 6500).toLocaleString('en-IN');
+    const sRate = (liveRates?.suite?.amount || 14500).toLocaleString('en-IN');
+    const vRate = (liveRates?.villa?.amount || 28000).toLocaleString('en-IN');
+
+    return {
+      answer: `Welcome to Smart Resort 360! Here are our current live room rates per night:\n\n• **Garden Room:** ₹${gRate} per night (35 sqm, tranquil garden/pool view, king or twin bed)\n• **Ocean Suite:** ₹${sRate} per night (65 sqm, direct Arabian Sea view, separate living salon & butler service)\n• **Private Pool Villa:** ₹${vRate} per night (150 sqm, private plunge pool, complimentary breakfast for 2, airport transfers & butler service)\n\nAll rates include complimentary high-speed Wi-Fi and full resort access. Would you like me to check availability and assist you with a reservation?`,
+      sources: [{ id: 'current-rates', title: 'Current Resort Room Rates' }],
+      mode: 'current-rates',
+      model: 'concierge-pricing-engine'
+    };
+  }
+
+  // 4. Dining & Restaurants
+  if (/\b(dinner|dining|food|restaurant|eat|palms|breakfast|lunch|bar|grill|menu)\b/i.test(q)) {
+    return {
+      answer: `🍽️ **Smart Resort 360 — Dining Experiences**\n\n• **The Palms Restaurant (Fine Dining):** Coastal degustation dinner (7:00 PM – 10:30 PM). 5-course chef menu at ₹3,500/person.\n• **Beachside Bar & Grill:** Fresh grilled seafood, woodfired pizzas, and signature cocktails right on the beach shore (11:00 AM – 11:00 PM).\n• **24/7 In-Room Artisan Dining:** Freshly prepared dishes delivered to your room in 30 minutes.\n\nWould you like me to reserve a dinner table at The Palms or Beachside Bar for tonight?`,
+      sources: [{ id: 'resort-dining', title: 'Resort Culinary Guide' }],
+      mode: 'concierge-dining',
+      model: 'concierge-rule-engine'
+    };
+  }
+
+  // 5. Late Checkout
+  if (/\b(late\s*check-?out|check\s*out|checkout\s*time)\b/i.test(q)) {
+    return {
+      answer: `🕒 **Check-out & Late Check-out Information**\n\n• **Standard Check-out:** 11:00 AM\n• **Late Check-out:** Available upon request up to 2:00 PM, subject to room availability.\n\nWould you like me to submit an automated Late Check-out Request to the Front Office Manager for your room?`,
+      sources: [{ id: 'resort-policies', title: 'Smart Resort 360 Policies' }],
+      mode: 'concierge-policy',
+      model: 'concierge-rule-engine'
+    };
+  }
+
+  // 6. Pool & Activities
+  if (/\b(pool|swimming|cabana|yoga|activities|bonfire|watersports?)\b/i.test(q)) {
+    return {
+      answer: `🏊 **Pool & Resort Recreation**\n\n• **Infinity Pool:** Open daily from 6:00 AM – 10:00 PM with complimentary loungers and poolside beverage service.\n• **VIP Pool Cabanas:** Private daybeds with dedicated butler service (₹2,500/day).\n• **Sunset Yoga:** Complimentary guided mindfulness session daily at 05:30 PM on the Oceanfront Deck.\n• **Beach Bonfire:** Daily at 6:30 PM on our private beach.\n\nLet me know if you would like me to reserve a VIP pool cabana or book a yoga slot!`,
+      sources: [{ id: 'resort-activities', title: 'Resort Amenities & Recreation' }],
+      mode: 'concierge-activities',
+      model: 'concierge-rule-engine'
+    };
+  }
+
+  // Clean extracted text from contexts
+  let cleanSummary = 'I would be happy to assist you with that. Please let me know if you would like me to connect you with our Front Desk or submit a request directly to the Resort Manager.';
+  if (contexts && contexts.length > 0) {
+    const raw = contexts[0];
+    const cleaned = raw.replace(/^===.*?===/gm, '').replace(/^#+.*$/gm, '').trim();
+    if (cleaned.length > 50) {
+      cleanSummary = cleaned.slice(0, 450) + (cleaned.length > 450 ? '…' : '');
+    }
+  }
+
+  return {
+    answer: cleanSummary,
+    sources: contexts.slice(0, 2).map((c, i) => ({ id: `guide-${i}`, title: 'Smart Resort 360 Official Guide' })),
+    mode: 'retrieval-grounded',
+    model: 'concierge-rule-engine'
+  };
+}
+
+

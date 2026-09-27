@@ -1,0 +1,7 @@
+node_modules
+.git
+.env
+dist
+server/data/*.sqlite-journal
+tests
+.gemini
